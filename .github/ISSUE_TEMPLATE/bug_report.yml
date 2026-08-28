@@ -1,0 +1,52 @@
+name: 错误报告
+description: 报告一个可以复现的问题，请勿包含账号或会话秘密。
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: 请勿附带密码、验证码、会话文件、Apple 账号信息或私人照片。日志和截图请先移除敏感数据。
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本
+      placeholder: 0.5.3
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: 运行方式
+      options:
+        - Windows 安装版
+        - Windows 便携版
+        - run_windows.bat
+        - 源码/开发安装
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 请同时写明实际结果、预期结果和最小复现步骤。
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Windows 与显示环境
+      placeholder: Windows 11 24H2, 150% scaling, 2560x1440
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 已脱敏的错误信息
+      description: 仅粘贴与问题有关的少量错误文字；删除账号、路径、cookie、照片名等隐私内容。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 隐私确认
+      options:
+        - label: 此 Issue 不包含密码、验证码、会话文件、cookie 或私人照片。
+          required: true

@@ -1,0 +1,5 @@
+include LICENSE
+include README.md
+include CHANGELOG.md
+include THIRD_PARTY_NOTICES.md
+recursive-include src/icloud_live_picker/assets *.ico *.png

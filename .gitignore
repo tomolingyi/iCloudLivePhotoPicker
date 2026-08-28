@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments and builds
+.venv/
+venv/
+build/
+dist/
+*.spec.local
+
+# Runtime/private state
+settings.json
+*.session
+*.part
+*.orientation.tmp.mov
+.icloudpd-picker/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local development artifacts
+*-settings.json
+docs/images/*.local.png

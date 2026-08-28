@@ -1,0 +1,5 @@
+-r requirements.txt
+PyInstaller==6.16.0
+altgraph==0.17.5
+pefile==2023.2.7
+pyinstaller-hooks-contrib==2025.9
