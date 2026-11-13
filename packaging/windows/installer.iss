@@ -1,5 +1,5 @@
 #define AppName "iCloud Live Photo Picker"
-#define AppVersion "0.5.3"
+#define AppVersion "0.5.4"
 #define AppPublisher "iCloud Live Photo Picker contributors"
 #define AppExeName "iCloudLivePhotoPicker.exe"
 

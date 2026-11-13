@@ -41,8 +41,11 @@ from PyQt6.QtWidgets import (
 
 from ..backend import ICloudBackend
 from ..constants import (
+    APP_BUILD,
     APP_NAME,
     APP_VERSION,
+    LIVE_SIZE_LABELS,
+    PHOTO_SIZE_LABELS,
     PREVIEW_QUALITY_LABELS,
     SORT_NEWEST,
     SORT_OPTIONS,
@@ -50,7 +53,7 @@ from ..constants import (
     default_cookie_dir,
 )
 from ..filenames import human_bytes, safe_filename, safe_session_stem
-from ..models import MediaItem
+from ..models import MediaItem, MediaPage
 from ..orientation import asset_exif_orientation, repair_mov_orientation
 from ..resources import asset_path, configure_windows_app_id
 from ..settings import SettingsStore
@@ -79,7 +82,7 @@ class UiBridge(QObject):
 class PickerWindow(QMainWindow):
     def __init__(self, *, settings_store: SettingsStore | None = None) -> None:
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
+        self.setWindowTitle(f"{APP_NAME} {APP_VERSION} {APP_BUILD}")
         self.setMinimumSize(1080, 720)
         self.resize(1320, 900)
 
@@ -96,6 +99,8 @@ class PickerWindow(QMainWindow):
         self.thumbnail_errors: dict[str, str] = {}
         self._deferred_thumbnails: dict[str, tuple[int, Image.Image]] = {}
         self._load_generation = 0
+        self._loaded_album: str | None = None
+        self._all_items_loaded = False
         self._busy = False
         self._auto_restoring = False
         self._active_page = "account"
@@ -267,7 +272,7 @@ class PickerWindow(QMainWindow):
         layout.addWidget(make_label("本地安全会话", object_name="sectionTitle"))
         layout.addWidget(make_label("可自动恢复 · 密码永不落盘", object_name="muted"))
         layout.addSpacing(5)
-        layout.addWidget(make_label(f"v{APP_VERSION}", object_name="muted"))
+        layout.addWidget(make_label(f"v{APP_VERSION} {APP_BUILD}", object_name="muted"))
         return sidebar
 
     def _build_topbar(self) -> QWidget:
@@ -436,7 +441,7 @@ class PickerWindow(QMainWindow):
         toolbar_grid.setColumnStretch(0, 3)
         toolbar_grid.setColumnStretch(2, 2)
         toolbar_grid.addWidget(self._field_label("相簿"), 0, 0)
-        toolbar_grid.addWidget(self._field_label("数量"), 0, 1)
+        toolbar_grid.addWidget(self._field_label("每次数量"), 0, 1)
         toolbar_grid.addWidget(self._field_label("排序方式"), 0, 2)
         self.album_combo = self._combo(["全部照片"], "全部照片")
         self.album_combo.setEnabled(False)
@@ -451,6 +456,27 @@ class PickerWindow(QMainWindow):
         self.load_btn.setEnabled(False)
         self.load_btn.clicked.connect(self.load_assets)
         toolbar_grid.addWidget(self.load_btn, 1, 3)
+
+        continuation_widget = QWidget()
+        continuation = QHBoxLayout(continuation_widget)
+        continuation.setContentsMargins(0, 2, 0, 0)
+        continuation.setSpacing(8)
+        self.load_more_btn = self._button("加载更多", role="soft", minimum_width=112)
+        self.load_more_btn.setEnabled(False)
+        self.load_more_btn.clicked.connect(self.load_more_assets)
+        continuation.addWidget(self.load_more_btn)
+        self.load_all_btn = self._button("全部加载", minimum_width=112)
+        self.load_all_btn.setEnabled(False)
+        self.load_all_btn.clicked.connect(self.load_all_assets)
+        continuation.addWidget(self.load_all_btn)
+        self.load_all_hint = make_label(
+            "加载全部会加大列表、缩略图任务和内存压力，请谨慎使用。",
+            object_name="muted",
+            word_wrap=True,
+        )
+        self.load_all_hint.setFont(QFont("Microsoft YaHei UI", 9))
+        continuation.addWidget(self.load_all_hint, 1)
+        toolbar_grid.addWidget(continuation_widget, 2, 0, 1, 4)
 
         actions_widget = QWidget()
         actions = QHBoxLayout(actions_widget)
@@ -474,7 +500,8 @@ class PickerWindow(QMainWindow):
         actions.addStretch(1)
         self.selection_badge = make_label("尚未加载", object_name="badge")
         actions.addWidget(self.selection_badge)
-        toolbar_grid.addWidget(actions_widget, 2, 0, 1, 4)
+        toolbar_grid.addWidget(actions_widget, 3, 0, 1, 4)
+        self.album_combo.currentTextChanged.connect(self._album_selection_changed)
         layout.addWidget(toolbar)
 
         progress_surface = self._surface()
@@ -619,10 +646,16 @@ class PickerWindow(QMainWindow):
         browse = self._button("浏览", role="soft", minimum_width=86)
         browse.clicked.connect(self.choose_output_dir)
         grid.addWidget(browse, 2, 1)
-        self.photo_size_combo = self._combo(["original", "adjusted", "medium"], self.settings.photo_size)
+        self.photo_size_combo = self._combo(
+            list(PHOTO_SIZE_LABELS.values()),
+            PHOTO_SIZE_LABELS[self.settings.photo_size],
+        )
         self.photo_size_combo.currentTextChanged.connect(self._preferences_changed)
         grid.addWidget(self.photo_size_combo, 2, 2)
-        self.live_size_combo = self._combo(["original", "medium", "small"], self.settings.live_size)
+        self.live_size_combo = self._combo(
+            list(LIVE_SIZE_LABELS.values()),
+            LIVE_SIZE_LABELS[self.settings.live_size],
+        )
         self.live_size_combo.currentTextChanged.connect(self._preferences_changed)
         grid.addWidget(self.live_size_combo, 2, 3)
         option_widget = QWidget()
@@ -692,8 +725,16 @@ class PickerWindow(QMainWindow):
             "high",
         )
         self.settings.output_dir = self.output_edit.text().strip()
-        self.settings.photo_size = self.photo_size_combo.currentText()
-        self.settings.live_size = self.live_size_combo.currentText()
+        self.settings.photo_size = self._key_for_quality_label(
+            PHOTO_SIZE_LABELS,
+            self.photo_size_combo.currentText(),
+            "original",
+        )
+        self.settings.live_size = self._key_for_quality_label(
+            LIVE_SIZE_LABELS,
+            self.live_size_combo.currentText(),
+            "original",
+        )
         self.settings.overwrite = self.overwrite_toggle.isChecked()
         self.settings.live_suffix = self.live_suffix_toggle.isChecked()
 
@@ -863,10 +904,14 @@ class PickerWindow(QMainWindow):
                 NoticeDialog.show_message(self, title="会话删除失败", message=f"{path}\n{exc}", kind="error")
                 return
         self.backend.api = None
+        self._loaded_album = None
+        self._all_items_loaded = False
         self.settings.last_login_ok = False
         self._save_settings(silent=True)
         self.connection_badge.setText("尚未连接")
         self.login_status_label.setText(f"已删除 {removed} 个当前账号会话文件。")
+        self.load_btn.setEnabled(False)
+        self._update_load_buttons()
 
     # ---------- Login and loading ----------
 
@@ -874,9 +919,26 @@ class PickerWindow(QMainWindow):
         self._busy = busy
         self.connect_btn.setEnabled(not busy)
         self.load_btn.setEnabled(self.backend.api is not None and not busy)
+        self._update_load_buttons()
         self._update_download_button()
         if message:
             self.login_status_label.setText(message)
+
+    def _album_selection_changed(self, _album: str) -> None:
+        self._update_load_buttons()
+
+    def _update_load_buttons(self) -> None:
+        if not hasattr(self, "load_more_btn"):
+            return
+        connected = self.backend.api is not None
+        album = self.album_combo.currentText() or "全部照片"
+        same_album = bool(self.items) and self._loaded_album == album
+        self.load_more_btn.setEnabled(
+            connected and not self._busy and same_album and not self._all_items_loaded
+        )
+        self.load_all_btn.setEnabled(
+            connected and not self._busy and not (same_album and self._all_items_loaded)
+        )
 
     def _try_auto_restore_session(self) -> None:
         if not (
@@ -1000,12 +1062,15 @@ class PickerWindow(QMainWindow):
         threading.Thread(target=work, daemon=True, name="icloud-albums").start()
 
     def _after_album_names(self, names: list[str]) -> None:
+        self._loaded_album = None
+        self._all_items_loaded = False
         self.album_combo.blockSignals(True)
         self.album_combo.clear()
         self.album_combo.addItems(["全部照片"] + names)
         self.album_combo.setCurrentText("Live" if "Live" in names else "全部照片")
         self.album_combo.blockSignals(False)
         self.album_combo.setEnabled(True)
+        self._update_load_buttons()
         self.password_edit.clear()
         if self.remember_account_toggle.isChecked():
             self.settings.remember_account = True
@@ -1039,43 +1104,120 @@ class PickerWindow(QMainWindow):
         print(details, file=sys.stderr)
         NoticeDialog.show_message(self, title=title, message=str(exc), kind="error")
 
-    def load_assets(self) -> None:
-        if self._busy:
-            return
+    def _requested_load_count(self) -> int:
         try:
             limit = int(self.limit_edit.text())
         except ValueError:
             limit = 300
         limit = max(20, min(limit, 5000))
         self.limit_edit.setText(str(limit))
+        return limit
+
+    def load_assets(self) -> None:
+        self._start_asset_load(append=False, load_all=False)
+
+    def load_more_assets(self) -> None:
         album = self.album_combo.currentText() or "全部照片"
-        self._set_busy(True, f"正在从“{album}”读取最近 {limit} 张照片…")
+        append = bool(self.items) and self._loaded_album == album
+        self._start_asset_load(append=append, load_all=False)
+
+    def load_all_assets(self) -> None:
+        album = self.album_combo.currentText() or "全部照片"
+        append = bool(self.items) and self._loaded_album == album
+        self._start_asset_load(append=append, load_all=True)
+
+    def _start_asset_load(self, *, append: bool, load_all: bool) -> None:
+        if self._busy:
+            return
+        limit = None if load_all else self._requested_load_count()
+        album = self.album_combo.currentText() or "全部照片"
+        known_asset_ids = set(self.item_by_id) if append else None
+        if load_all:
+            action = "剩余全部" if append else "全部"
+            busy_message = f"正在从“{album}”读取{action}照片…"
+        elif append:
+            busy_message = f"正在从“{album}”继续读取 {limit} 张照片…"
+        else:
+            busy_message = f"正在从“{album}”读取最近 {limit} 张照片…"
+        self._set_busy(True, busy_message)
         self.progress.setRange(0, 0)
         self.progress_text_label.setText(f"正在读取“{album}”中的照片列表…")
 
         def work() -> None:
             try:
-                items = self.backend.load_items(album, limit)
-                self._post_ui(lambda loaded=items: self._after_items(loaded))
+                page = self.backend.load_items_page(
+                    album,
+                    start=0,
+                    limit=limit,
+                    known_asset_ids=known_asset_ids,
+                )
+                self._post_ui(
+                    lambda loaded=page: self._after_items_page(
+                        loaded,
+                        album=album,
+                        append=append,
+                        requested_all=load_all,
+                    )
+                )
             except Exception as exc:
                 details = traceback.format_exc()
                 self._post_ui(lambda error=exc, detail=details: self._show_worker_error("加载照片失败", error, detail))
 
-        threading.Thread(target=work, daemon=True, name="icloud-list").start()
+        thread_name = "icloud-list-all" if load_all else "icloud-list-more" if append else "icloud-list"
+        threading.Thread(target=work, daemon=True, name=thread_name).start()
 
     def _after_items(self, items: list[MediaItem]) -> None:
-        self._load_generation += 1
-        self.items = items
-        self.item_by_id = {item.asset_id: item for item in items}
-        self.thumbnail_images.clear()
-        self.thumbnail_pending.clear()
-        self.thumbnail_errors.clear()
-        self._deferred_thumbnails.clear()
-        self.gallery.clear_thumbnails()
+        """Compatibility hook used by screenshot helpers and existing tests."""
+        album = self.album_combo.currentText() or "全部照片"
+        self._after_items_page(
+            MediaPage(items=items, exhausted=False, total_assets=len(items)),
+            album=album,
+            append=False,
+            requested_all=False,
+        )
+
+    def _after_items_page(
+        self,
+        page: MediaPage,
+        *,
+        album: str,
+        append: bool,
+        requested_all: bool,
+    ) -> None:
+        if append:
+            existing_ids = set(self.item_by_id)
+            added_items: list[MediaItem] = []
+            for item in page.items:
+                if item.asset_id in existing_ids:
+                    continue
+                existing_ids.add(item.asset_id)
+                added_items.append(item)
+            self.items.extend(added_items)
+            self.item_by_id.update((item.asset_id, item) for item in added_items)
+        else:
+            self._load_generation += 1
+            self.items = list(page.items)
+            added_items = list(page.items)
+            self.item_by_id = {item.asset_id: item for item in self.items}
+            self.thumbnail_images.clear()
+            self.thumbnail_pending.clear()
+            self.thumbnail_errors.clear()
+            self._deferred_thumbnails.clear()
+            self.gallery.clear_thumbnails()
+        self._loaded_album = album
+        self._all_items_loaded = page.exhausted
         self.progress.setRange(0, 1000)
         self.progress.setValue(1000)
-        self.progress_text_label.setText(f"已读取 {len(items)} 张照片，正在按可见区域加载缩略图。")
-        self._set_busy(False, f"已加载 {len(items)} 张照片。缩略图会继续在后台补齐。")
+        if append:
+            summary = f"新增 {len(added_items)} 张，共已读取 {len(self.items)} 张照片"
+        else:
+            summary = f"已读取 {len(self.items)} 张照片"
+        if page.exhausted:
+            summary += "，已到相簿末尾"
+        elif requested_all:
+            summary += "，但相簿仍有未读取内容"
+        self.progress_text_label.setText(f"{summary}，正在按可见区域加载缩略图。")
+        self._set_busy(False, f"{summary}。缩略图会继续在后台补齐。")
         self.apply_filter()
         self._update_selection_text()
 
@@ -1461,12 +1603,13 @@ class PickerWindow(QMainWindow):
             return
         self._preferences_changed()
         overwrite = self.overwrite_toggle.isChecked()
-        photo_size = self.photo_size_combo.currentText()
-        live_size = self.live_size_combo.currentText()
+        photo_size = self.settings.photo_size
+        live_size = self.settings.live_size
         fix_orientation = self.fix_orientation_toggle.isChecked()
         self._busy = True
         self.connect_btn.setEnabled(False)
         self.load_btn.setEnabled(False)
+        self._update_load_buttons()
         self.download_btn.setEnabled(False)
         self.progress.setRange(0, 1000)
         self.progress.setValue(0)
@@ -1549,6 +1692,7 @@ class PickerWindow(QMainWindow):
         self._busy = False
         self.connect_btn.setEnabled(True)
         self.load_btn.setEnabled(self.backend.api is not None)
+        self._update_load_buttons()
         self._update_download_button()
         summary = (
             f"完成：{ok} 个下载，{repaired_existing} 个已有 MOV 已修复，"

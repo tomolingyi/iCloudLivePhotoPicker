@@ -12,10 +12,10 @@ prepare_qt_runtime()
 
 from PyQt6.QtCore import QPointF, QRectF, QTimer, Qt
 from PyQt6.QtGui import QColor, QFont, QImage, QMouseEvent, QPainter, QPainterPath, QPen, QPixmap
-from PyQt6.QtWidgets import QAbstractScrollArea, QFrame, QWidget
+from PyQt6.QtWidgets import QAbstractScrollArea, QFrame, QPushButton, QWidget
 
 from ..models import MediaItem
-from .qt_widgets import COLORS
+from .qt_widgets import COLORS, set_role
 
 
 class GalleryView(QAbstractScrollArea):
@@ -62,9 +62,15 @@ class GalleryView(QAbstractScrollArea):
 
         self._empty_title = ""
         self._empty_detail = ""
-        self._empty_action_text = ""
         self._empty_action: Callable[[], None] | None = None
-        self._empty_action_rect = QRectF()
+        self._empty_action_button = QPushButton(self.viewport())
+        self._empty_action_button.setObjectName("emptyActionButton")
+        set_role(self._empty_action_button, "primary")
+        self._empty_action_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._empty_action_button.setFont(QFont("Microsoft YaHei UI", 12, QFont.Weight.Bold))
+        self._empty_action_button.setFixedSize(220, 46)
+        self._empty_action_button.clicked.connect(self._activate_empty_action)
+        self._empty_action_button.hide()
 
         self._press_viewport: QPointF | None = None
         self._press_content: QPointF | None = None
@@ -79,6 +85,10 @@ class GalleryView(QAbstractScrollArea):
         self._auto_scroll_timer = QTimer(self)
         self._auto_scroll_timer.setInterval(28)
         self._auto_scroll_timer.timeout.connect(self._auto_scroll_step)
+        self._thumbnail_kick_timer = QTimer(self)
+        self._thumbnail_kick_timer.setSingleShot(True)
+        self._thumbnail_kick_timer.setInterval(160)
+        self._thumbnail_kick_timer.timeout.connect(self.request_visible_thumbnails)
 
     def set_items(
         self,
@@ -94,12 +104,19 @@ class GalleryView(QAbstractScrollArea):
         self.thumbnail_errors = set(thumbnail_errors)
         self._requested_this_paint.clear()
         self._empty_title = ""
+        self._empty_action = None
+        self._empty_action_button.hide()
         for asset_id, image in thumbnail_cache.items():
             if asset_id not in self.pixmaps:
                 self.install_thumbnail(asset_id, image)
         self.verticalScrollBar().setValue(0)
         self._update_scroll_range()
         self.viewport().update()
+        # A page/layout switch can invalidate the first paint before its queued
+        # thumbnail callbacks run. Request the visible cards once immediately
+        # and once after geometry settles so the first row cannot remain blank.
+        self.request_visible_thumbnails()
+        self._thumbnail_kick_timer.start()
 
     def show_empty(
         self,
@@ -112,10 +129,22 @@ class GalleryView(QAbstractScrollArea):
         self.item_by_id = {}
         self._empty_title = title
         self._empty_detail = detail
-        self._empty_action_text = action_text
         self._empty_action = action
         self.verticalScrollBar().setRange(0, 0)
+        self._empty_action_button.setText(action_text)
+        self._position_empty_action()
+        self._empty_action_button.setVisible(bool(action_text))
         self.viewport().update()
+
+    def _activate_empty_action(self) -> None:
+        if not self.items and self._empty_action is not None:
+            self._empty_action()
+
+    def _position_empty_action(self) -> None:
+        self._empty_action_button.move(
+            round((self.viewport().width() - self._empty_action_button.width()) / 2),
+            round(self.viewport().height() * 0.43 + 98),
+        )
 
     def set_pair_mode(self, pair_mode: bool) -> None:
         self.pair_mode = pair_mode
@@ -158,6 +187,7 @@ class GalleryView(QAbstractScrollArea):
     def resizeEvent(self, event: Any) -> None:
         super().resizeEvent(event)
         self._update_scroll_range()
+        self._position_empty_action()
 
     def _update_scroll_range(self) -> None:
         width = max(1, self.viewport().width())
@@ -188,6 +218,15 @@ class GalleryView(QAbstractScrollArea):
             (scroll + self.viewport().height()) // self.ROW_HEIGHT + 2,
         )
         return range(first_row * self._columns, min(len(self.items), (last_row + 1) * self._columns))
+
+    def request_visible_thumbnails(self) -> None:
+        """Ensure every currently visible card has a thumbnail task."""
+        for index in self._visible_index_range():
+            item = self.items[index]
+            if item.asset_id in self.pixmaps or item.asset_id in self.thumbnail_errors:
+                continue
+            self._requested_this_paint.add(item.asset_id)
+            self.on_need_thumbnail(item)
 
     def paintEvent(self, _event: Any) -> None:
         painter = QPainter(self.viewport())
@@ -234,14 +273,6 @@ class GalleryView(QAbstractScrollArea):
         painter.setPen(QColor(COLORS["muted"]))
         painter.setFont(QFont("Microsoft YaHei UI", 11))
         painter.drawText(QRectF(20, center_y + 50, self.viewport().width() - 40, 30), Qt.AlignmentFlag.AlignCenter, self._empty_detail)
-        button_width = 220
-        self._empty_action_rect = QRectF(center_x - button_width / 2, center_y + 98, button_width, 46)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(COLORS["primary"]))
-        painter.drawRoundedRect(self._empty_action_rect, 12, 12)
-        painter.setPen(QColor("#FFFFFF"))
-        painter.setFont(QFont("Microsoft YaHei UI", 12, QFont.Weight.Bold))
-        painter.drawText(self._empty_action_rect, Qt.AlignmentFlag.AlignCenter, self._empty_action_text)
 
     def _paint_card(self, painter: QPainter, item: MediaItem, rect: QRectF) -> None:
         selected = item.selected
@@ -333,8 +364,6 @@ class GalleryView(QAbstractScrollArea):
             super().mousePressEvent(event)
             return
         if not self.items:
-            if self._empty_action is not None and self._empty_action_rect.contains(event.position()):
-                self._empty_action()
             return
         self.setFocus()
         self._press_viewport = event.position()

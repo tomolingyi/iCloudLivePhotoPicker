@@ -5,7 +5,7 @@
   <p>先加载轻量缩略图，选中需要的内容后再下载原始照片和配套 MOV。</p>
 
   <p>
-    <img alt="Release v0.5.3" src="https://img.shields.io/badge/release-v0.5.3-278B82?style=flat-square">
+    <img alt="Release v0.5.4 r5" src="https://img.shields.io/badge/release-v0.5.4%20r5-278B82?style=flat-square">
     <img alt="Windows 10 和 11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-278B82?style=flat-square&logo=windows11&logoColor=white">
     <img alt="Python 3.10 到 3.13" src="https://img.shields.io/badge/Python-3.10%E2%80%933.13-3776AB?style=flat-square&logo=python&logoColor=white">
     <img alt="GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-59636E?style=flat-square">
@@ -32,8 +32,8 @@ Windows 安装包、便携版和整理好的源码包统一放在 [百度网盘]
 
 | 版本 | 文件 | 适合谁 |
 | --- | --- | --- |
-| **安装版（推荐）** | `iCloudLivePhotoPicker-v0.5.3-Setup.exe` | 希望拥有开始菜单、桌面快捷方式和正常卸载入口的用户 |
-| 便携版 | `iCloudLivePhotoPicker-v0.5.3-windows-x64.zip` | 不想安装，或希望放在移动硬盘中使用的用户 |
+| **安装版（推荐）** | `iCloudLivePhotoPicker-v0.5.4-Setup.exe` | 希望拥有开始菜单、桌面快捷方式和正常卸载入口的用户 |
+| 便携版 | `iCloudLivePhotoPicker-v0.5.4-windows-x64.zip` | 不想安装，或希望放在移动硬盘中使用的用户 |
 | 源码 | GitHub 仓库，或网盘中的源码压缩包 | 开发、审计和自行构建 |
 
 安装版与便携版均不要求另行安装 Python。便携版需要完整解压后运行其中的 `iCloudLivePhotoPicker.exe`，不能只复制单个 EXE。
@@ -45,7 +45,7 @@ Windows 安装包、便携版和整理好的源码包统一放在 [百度网盘]
 
 | 浏览与选择 | Live Photo | Windows 体验 |
 | --- | --- | --- |
-| 相簿、数量、筛选与多种排序 | 默认联动选择照片与配套 MOV | PyQt6 原生窗口、贴靠与最大化 |
+| 相簿、每次数量、加载更多与全部加载 | 默认联动选择照片与配套 MOV | PyQt6 原生窗口、贴靠与最大化 |
 | 虚拟化缩略图网格，适合大量照片 | 可切换为照片/MOV 独立选择 | 资源管理器式框选、`Ctrl` 追加选择 |
 | 可调缩略图和预览清晰度 | 兼容部分 Windows 组件的 MOV 方向问题 | 边缘自动滚动、后台加载与下载进度 |
 
@@ -141,9 +141,9 @@ python -m unittest discover -s tests -v
 产物位于 `dist/`：
 
 ```text
-iCloudLivePhotoPicker-v0.5.3-Setup.exe
-iCloudLivePhotoPicker-v0.5.3-windows-x64.zip
-iCloudLivePhotoPicker-v0.5.3-source.zip
+iCloudLivePhotoPicker-v0.5.4-Setup.exe
+iCloudLivePhotoPicker-v0.5.4-windows-x64.zip
+iCloudLivePhotoPicker-v0.5.4-source.zip
 ```
 
 ## 开源协作

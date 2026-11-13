@@ -76,9 +76,9 @@ GitHub noreply 邮箱可以减少真实邮箱暴露；它位于 GitHub 的 Email
 
 网盘共享目录中放置：
 
-- `iCloudLivePhotoPicker-v0.5.3-Setup.exe`
-- `iCloudLivePhotoPicker-v0.5.3-windows-x64.zip`
-- `iCloudLivePhotoPicker-v0.5.3-source.zip`
+- `iCloudLivePhotoPicker-v0.5.4-Setup.exe`
+- `iCloudLivePhotoPicker-v0.5.4-windows-x64.zip`
+- `iCloudLivePhotoPicker-v0.5.4-source.zip`
 
 确认共享地址是：
 
@@ -89,14 +89,14 @@ https://pan.baidu.com/s/13qvegP94vbW2sPKHhcliOg?pwd=r8na
 
 每次替换网盘文件后，重新下载并核对文件名、大小和 SHA-256。
 
-## 6. 创建仅源码的 v0.5.3 Release
+## 6. 创建仅源码的 v0.5.4 Release
 
 进入 Releases → Draft a new release：
 
-- Choose a tag：`v0.5.3`
+- Choose a tag：`v0.5.4`
 - Target：`main`
-- Release title：`iCloud Live Photo Picker v0.5.3`
-- 内容：复制 [`docs/releases/v0.5.3.md`](releases/v0.5.3.md)
+- Release title：`iCloud Live Photo Picker v0.5.4`
+- 内容：复制 [`docs/releases/v0.5.4.md`](releases/v0.5.4.md)
 - 不上传 EXE、便携 ZIP 或其他 Windows 二进制附件。
 
 发布后 GitHub 会自动提供该标签对应的 Source code ZIP/TAR，这是 GitHub 上唯一需要保留的下载内容。Windows 安装包、便携版和整理好的源码包继续从百度网盘下载。
@@ -108,9 +108,9 @@ https://pan.baidu.com/s/13qvegP94vbW2sPKHhcliOg?pwd=r8na
 在 PowerShell 中计算：
 
 ```powershell
-Get-FileHash .\dist\iCloudLivePhotoPicker-v0.5.3-Setup.exe -Algorithm SHA256
-Get-FileHash .\dist\iCloudLivePhotoPicker-v0.5.3-windows-x64.zip -Algorithm SHA256
-Get-FileHash .\dist\iCloudLivePhotoPicker-v0.5.3-source.zip -Algorithm SHA256
+Get-FileHash .\dist\iCloudLivePhotoPicker-v0.5.4-Setup.exe -Algorithm SHA256
+Get-FileHash .\dist\iCloudLivePhotoPicker-v0.5.4-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\dist\iCloudLivePhotoPicker-v0.5.4-source.zip -Algorithm SHA256
 ```
 
 把结果粘贴到 Release notes 的校验区。虽然二进制在网盘中，GitHub 上的版本说明仍是公开且可追踪的校验来源。哈希只能确认文件与发布时一致，不能替代代码签名。

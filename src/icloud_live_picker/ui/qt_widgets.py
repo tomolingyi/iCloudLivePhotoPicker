@@ -89,6 +89,7 @@ QPushButton[role="primary"] {{
     font-weight: 700;
 }}
 QPushButton[role="primary"]:hover {{ background: {COLORS['primary_hover']}; }}
+QPushButton[role="primary"]:pressed {{ background: #185E59; }}
 QPushButton[role="soft"] {{
     background: {COLORS['primary_soft']};
     color: {COLORS['primary_hover']};

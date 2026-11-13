@@ -31,5 +31,6 @@ Thumbs.db
 Desktop.ini
 
 # Local development artifacts
+/work/
 *-settings.json
 docs/images/*.local.png

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import itertools
 import os
 import time
 from pathlib import Path
@@ -10,7 +9,7 @@ from typing import Any, Callable
 from PIL import Image, ImageOps
 
 from .constants import IMAGE_SUFFIXES
-from .models import MediaItem
+from .models import MediaItem, MediaPage
 
 
 class ICloudBackend:
@@ -75,83 +74,121 @@ class ICloudBackend:
         return ordered
 
     @staticmethod
-    def _prepare_descending(album: Any) -> int:
-        """Configure CloudKit rank pagination for newest-first iteration."""
+    def _prepare_album(album: Any) -> int:
+        """Reset native rank traversal: rank 0 is the newest asset.
+
+        icloudpd implements --recent by taking the first N elements from the
+        unmodified PhotoAlbum iterator (ASCENDING ranks, increasing offset).
+        Rank direction is not chronological direction. Starting at count - 1
+        and decrementing instead selects the oldest assets first.
+        """
         total = len(album)
-        if not getattr(album, "_picker_descending_patched", False):
-            original_query = album._list_query_gen
-
-            def desc_query(
-                offset: int,
-                list_type: str,
-                query_filter: Any = None,
-            ) -> dict[str, Any]:
-                query = original_query(offset, list_type, query_filter)
-                filters = query.get("query", {}).get("filterBy", [])
-                for entry in filters:
-                    if entry.get("fieldName") == "direction":
-                        entry.setdefault("fieldValue", {})["value"] = "DESCENDING"
-                        break
-                return query
-
-            def decrement_offset(value: int) -> None:
-                album.offset -= value
-
-            album._list_query_gen = desc_query
-            album.increment_offset = decrement_offset
-            album._picker_descending_patched = True
-
-        album.offset = max(0, total - 1)
+        album.offset = 0
+        album.page_size = 100
         return total
 
-    def load_items(self, album_name: str, limit: int) -> list[MediaItem]:
+    def _media_item(self, asset: Any) -> MediaItem | None:
+        filename = str(getattr(asset, "filename", "") or f"{asset.id}.jpg")
+        suffix = Path(filename).suffix.lower()
+        item_type = str(getattr(asset, "item_type", "")).lower()
+        if suffix not in IMAGE_SUFFIXES and "image" not in item_type:
+            return None
+
+        versions = asset.versions
+        is_live = any(
+            key in versions
+            for key in (
+                self.LivePhotoVersionSize.ORIGINAL,
+                self.LivePhotoVersionSize.MEDIUM,
+                self.LivePhotoVersionSize.THUMB,
+            )
+        )
+        try:
+            created = asset.created.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            created = ""
+        return MediaItem(
+            asset=asset,
+            asset_id=str(asset.id),
+            filename=filename,
+            created_text=created,
+            is_live=is_live,
+        )
+
+    def _album(self, album_name: str) -> Any:
         if self.api is None:
             raise RuntimeError("尚未登录")
         photos = self.api.photos
         if album_name == "全部照片":
-            album = photos.all
-        else:
-            albums = photos.albums
-            if album_name not in albums:
-                raise RuntimeError(f"找不到相簿：{album_name}")
-            album = albums[album_name]
+            return photos.all
+        albums = photos.albums
+        if album_name not in albums:
+            raise RuntimeError(f"找不到相簿：{album_name}")
+        return albums[album_name]
 
-        total_assets = self._prepare_descending(album)
-        album.page_size = 100
+    def load_items_page(
+        self,
+        album_name: str,
+        *,
+        start: int = 0,
+        limit: int | None = 300,
+        known_asset_ids: set[str] | None = None,
+    ) -> MediaPage:
+        """Load image assets newest-first, optionally continuing after ``start`` images.
+
+        CloudKit is still queried in its native 100-record pages. ``start`` counts
+        image assets rather than raw album records because an album can also
+        contain standalone videos. When ``known_asset_ids`` is supplied, assets
+        already displayed by the UI are ignored instead of relying on a numeric
+        offset. That keeps continuation stable when iCloud inserts or exposes new
+        records between requests. A ``None`` limit deliberately scans the rest of
+        the album for the UI's explicit "load all" action.
+        """
+        if start < 0:
+            raise ValueError("start must be non-negative")
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be positive or None")
+
+        album = self._album(album_name)
+
+        total_assets = self._prepare_album(album)
         items: list[MediaItem] = []
-        scan_cap = min(total_assets, max(limit * 4, limit + 100))
-        for asset in itertools.islice(iter(album), scan_cap):
-            filename = str(getattr(asset, "filename", "") or f"{asset.id}.jpg")
-            suffix = Path(filename).suffix.lower()
-            item_type = str(getattr(asset, "item_type", "")).lower()
-            if suffix not in IMAGE_SUFFIXES and "image" not in item_type:
+        known_ids = known_asset_ids or set()
+        seen_ids: set[str] = set()
+        image_index = 0
+        exhausted = True
+        # Treat the count as informational only. Consume native pages until the
+        # iterator ends or one more unseen image proves that a next page exists.
+        for asset in album:
+            asset_id = str(asset.id)
+            if asset_id in seen_ids:
+                continue
+            seen_ids.add(asset_id)
+            item = self._media_item(asset)
+            if item is None:
                 continue
 
-            versions = asset.versions
-            is_live = any(
-                key in versions
-                for key in (
-                    self.LivePhotoVersionSize.ORIGINAL,
-                    self.LivePhotoVersionSize.MEDIUM,
-                    self.LivePhotoVersionSize.THUMB,
-                )
-            )
-            try:
-                created = asset.created.strftime("%Y-%m-%d %H:%M")
-            except Exception:
-                created = ""
-            items.append(
-                MediaItem(
-                    asset=asset,
-                    asset_id=str(asset.id),
-                    filename=filename,
-                    created_text=created,
-                    is_live=is_live,
-                )
-            )
-            if len(items) >= limit:
+            if image_index < start:
+                image_index += 1
+                continue
+            image_index += 1
+            if item.asset_id in known_ids:
+                continue
+            if limit is not None and len(items) >= limit:
+                exhausted = False
                 break
-        return items
+            items.append(item)
+
+        total_assets = max(total_assets, len(seen_ids))
+        return MediaPage(
+            items=items,
+            exhausted=exhausted,
+            total_assets=total_assets,
+        )
+
+    def load_items(self, album_name: str, limit: int) -> list[MediaItem]:
+        """Backward-compatible single-page loader used by integrations/tests."""
+        return self.load_items_page(album_name, limit=limit).items
 
     def _pick_version(self, item: MediaItem, kind: str, size: str) -> Any:
         versions = item.asset.versions

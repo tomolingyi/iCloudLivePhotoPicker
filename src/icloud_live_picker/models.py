@@ -24,3 +24,12 @@ class MediaItem:
         self.selected_photo = selected
         self.selected_live = selected and self.is_live
 
+
+@dataclass
+class MediaPage:
+    """A page of image assets plus enough state to continue pagination."""
+
+    items: list[MediaItem]
+    exhausted: bool
+    total_assets: int
+

@@ -10,8 +10,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PIL import Image
 
-from icloud_live_picker.constants import THUMBNAIL_QUALITY_LABELS
-from icloud_live_picker.models import MediaItem
+from icloud_live_picker.constants import LIVE_SIZE_LABELS, PHOTO_SIZE_LABELS, THUMBNAIL_QUALITY_LABELS
+from icloud_live_picker.models import MediaItem, MediaPage
 from icloud_live_picker.settings import SettingsStore
 from icloud_live_picker.ui.qt_app import PickerWindow
 from icloud_live_picker.ui.qt_dialogs import NoticeDialog, SessionClearDialog, VerificationCodeDialog
@@ -47,9 +47,40 @@ class QtUiTests(unittest.TestCase):
         self.assertEqual(7, len(combos))
         self.assertTrue(all(combo.view().frameShape() == QFrame.Shape.NoFrame for combo in combos))
 
+    def test_download_quality_selectors_use_chinese_labels_and_save_internal_keys(self) -> None:
+        self.assertEqual(
+            list(PHOTO_SIZE_LABELS.values()),
+            [self.window.photo_size_combo.itemText(index) for index in range(self.window.photo_size_combo.count())],
+        )
+        self.assertEqual(
+            list(LIVE_SIZE_LABELS.values()),
+            [self.window.live_size_combo.itemText(index) for index in range(self.window.live_size_combo.count())],
+        )
+        self.window.photo_size_combo.setCurrentText(PHOTO_SIZE_LABELS["adjusted"])
+        self.window.live_size_combo.setCurrentText(LIVE_SIZE_LABELS["small"])
+        self.window._sync_preferences_to_settings()
+        self.assertEqual("adjusted", self.window.settings.photo_size)
+        self.assertEqual("small", self.window.settings.live_size)
+
     def test_ui_has_no_idle_refresh_timer(self) -> None:
         self.assertFalse(self.window.thumbnail_flush_timer.isActive())
         self.assertFalse(self.window.gallery._auto_scroll_timer.isActive())
+
+    def test_first_visible_row_always_schedules_thumbnail_requests(self) -> None:
+        requested: list[str] = []
+        self.window.gallery.on_need_thumbnail = lambda item: requested.append(item.asset_id)
+        items = [
+            MediaItem(object(), f"visible-{index}", f"IMG_{index}.HEIC", "", False)
+            for index in range(20)
+        ]
+        self.window.gallery.set_items(
+            items,
+            pair_mode=True,
+            thumbnail_cache={},
+            thumbnail_errors=set(),
+        )
+        self.application.processEvents()
+        self.assertTrue({item.asset_id for item in items[:5]}.issubset(requested))
 
     def test_new_account_ui_defaults_to_phone_mainland_mode(self) -> None:
         self.assertTrue(self.window.phone_login_toggle.isChecked())
@@ -71,6 +102,58 @@ class QtUiTests(unittest.TestCase):
         self.window._after_items([])
         self.assertEqual((0, 1000), (self.window.progress.minimum(), self.window.progress.maximum()))
         self.assertEqual(1000, self.window.progress.value())
+
+    def test_load_more_appends_and_preserves_existing_selection(self) -> None:
+        self.window.backend.api = object()
+        initial = [MediaItem(object(), "first", "IMG_1.HEIC", "", False)]
+        self.window._after_items_page(
+            MediaPage(initial, exhausted=False, total_assets=3),
+            album="全部照片",
+            append=False,
+            requested_all=False,
+        )
+        initial[0].selected_photo = True
+        added = [
+            MediaItem(object(), "second", "IMG_2.HEIC", "", False),
+            MediaItem(object(), "third", "IMG_3.HEIC", "", False),
+        ]
+        self.window._after_items_page(
+            MediaPage(added, exhausted=True, total_assets=3),
+            album="全部照片",
+            append=True,
+            requested_all=False,
+        )
+
+        self.assertEqual(["first", "second", "third"], [item.asset_id for item in self.window.items])
+        self.assertTrue(self.window.items[0].selected_photo)
+        self.assertFalse(self.window.load_more_btn.isEnabled())
+        self.assertFalse(self.window.load_all_btn.isEnabled())
+
+    def test_load_all_warning_is_visible_next_to_pagination_actions(self) -> None:
+        self.assertEqual(
+            "加载全部会加大列表、缩略图任务和内存压力，请谨慎使用。",
+            self.window.load_all_hint.text(),
+        )
+        self.assertEqual("加载更多", self.window.load_more_btn.text())
+        self.assertEqual("全部加载", self.window.load_all_btn.text())
+
+    def test_first_page_shows_latest_five_before_load_more(self) -> None:
+        from tests.test_pagination import CloudKitFixture
+
+        cloud = CloudKitFixture(305)
+        self.window.backend = cloud.backend()
+        self.window.gallery.on_need_thumbnail = lambda item: None
+        first = self.window.backend.load_items_page("全部照片", limit=300)
+        self.window._after_items_page(first, album="全部照片", append=False, requested_all=False)
+        self.assertEqual(cloud.ids[:5], [item.asset_id for item in self.window.gallery.items[:5]])
+        self.window.items[0].select_pair(True)
+        rest = self.window.backend.load_items_page(
+            "全部照片", limit=300, known_asset_ids=set(self.window.item_by_id),
+        )
+        self.window._after_items_page(rest, album="全部照片", append=True, requested_all=False)
+        self.assertEqual(cloud.ids, [item.asset_id for item in self.window.gallery.items])
+        self.assertTrue(self.window.item_by_id[cloud.ids[0]].selected_photo)
+        self.assertFalse(self.window.load_more_btn.isEnabled())
 
     def test_all_project_prompts_use_styled_dialog_surfaces(self) -> None:
         dialogs = [

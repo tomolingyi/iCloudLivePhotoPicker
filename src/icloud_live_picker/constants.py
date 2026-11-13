@@ -5,7 +5,8 @@ from pathlib import Path
 
 
 APP_NAME = "iCloud Live Photo Picker"
-APP_VERSION = "0.5.3"
+APP_VERSION = "0.5.4"
+APP_BUILD = "r5"
 
 
 def default_cookie_dir() -> Path:
@@ -67,4 +68,16 @@ PREVIEW_QUALITY_LABELS = {
     "standard": "标准 · 1280 × 960",
     "high": "高清 · 2048 × 1536（推荐）",
     "original": "原始分辨率",
+}
+
+PHOTO_SIZE_LABELS = {
+    "original": "原始质量（推荐）",
+    "adjusted": "调整后版本（包含编辑）",
+    "medium": "中等尺寸",
+}
+
+LIVE_SIZE_LABELS = {
+    "original": "原始质量（推荐）",
+    "medium": "中等尺寸",
+    "small": "小尺寸",
 }

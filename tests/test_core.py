@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 
 from icloud_live_picker.backend import ICloudBackend
 from icloud_live_picker.constants import (
@@ -21,10 +22,10 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(safe_filename('IMG:<12>?.HEIC'), "IMG__12__.HEIC")
         self.assertEqual(human_bytes(1536), "1.5 KB")
 
-    def test_descending_pagination_starts_at_last_rank(self) -> None:
+    def test_pagination_resets_to_first_rank_without_reversing_upstream(self) -> None:
         album_type = type("Album", (object,), {"__len__": lambda self: 205})
         album = album_type()
-        album.offset = 0
+        album.offset = 150
         album._list_query_gen = lambda offset, list_type, query_filter=None: {
             "query": {
                 "filterBy": [
@@ -36,13 +37,113 @@ class HelperTests(unittest.TestCase):
             }
         }
 
-        ICloudBackend._prepare_descending(album)
+        original_query = album._list_query_gen
+        ICloudBackend._prepare_album(album)
 
-        self.assertEqual(album.offset, 204)
-        query = album._list_query_gen(204, "CPLAssetAndMasterByAddedDate")
-        self.assertEqual(query["query"]["filterBy"][0]["fieldValue"]["value"], "DESCENDING")
-        album.increment_offset(1)
-        self.assertEqual(album.offset, 203)
+        self.assertEqual(album.offset, 0)
+        self.assertIs(original_query, album._list_query_gen)
+        query = album._list_query_gen(0, "CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted")
+        self.assertEqual(query["query"]["filterBy"][0]["fieldValue"]["value"], "ASCENDING")
+
+    def test_media_pages_continue_by_image_count_and_can_load_the_rest(self) -> None:
+        assets = [
+            SimpleNamespace(id="0", filename="IMG_0.HEIC", item_type="image", versions={}),
+            SimpleNamespace(id="video", filename="CLIP.MOV", item_type="video", versions={}),
+            SimpleNamespace(id="1", filename="IMG_1.JPG", item_type="image", versions={}),
+            SimpleNamespace(id="2", filename="IMG_2.HEIC", item_type="image", versions={}),
+            SimpleNamespace(id="3", filename="IMG_3.PNG", item_type="image", versions={}),
+            SimpleNamespace(id="4", filename="IMG_4.HEIC", item_type="image", versions={}),
+        ]
+
+        class FakeAlbum:
+            def __init__(self) -> None:
+                self.offset = 0
+                self._list_query_gen = lambda offset, list_type, query_filter=None: {
+                    "query": {
+                        "filterBy": [
+                            {
+                                "fieldName": "direction",
+                                "fieldValue": {"value": "ASCENDING"},
+                            }
+                        ]
+                    }
+                }
+
+            def __len__(self) -> int:
+                return len(assets)
+
+            def __iter__(self):
+                return iter(assets[self.offset :])
+
+        backend = ICloudBackend()
+        backend.api = SimpleNamespace(photos=SimpleNamespace(all=FakeAlbum()))
+        backend.LivePhotoVersionSize = SimpleNamespace(
+            ORIGINAL="live-original",
+            MEDIUM="live-medium",
+            THUMB="live-thumb",
+        )
+
+        first = backend.load_items_page("全部照片", start=0, limit=2)
+        second = backend.load_items_page("全部照片", start=2, limit=2)
+        remainder = backend.load_items_page("全部照片", start=4, limit=None)
+
+        self.assertEqual(["0", "1"], [item.asset_id for item in first.items])
+        self.assertEqual(["2", "3"], [item.asset_id for item in second.items])
+        self.assertEqual(["4"], [item.asset_id for item in remainder.items])
+        self.assertFalse(first.exhausted)
+        self.assertFalse(second.exhausted)
+        self.assertTrue(remainder.exhausted)
+
+    def test_media_page_continuation_recovers_new_head_assets_by_id(self) -> None:
+        assets = [
+            SimpleNamespace(id=str(index), filename=f"IMG_{index}.HEIC", item_type="image", versions={})
+            for index in range(4)
+        ]
+
+        class ChangingAlbum:
+            def __init__(self) -> None:
+                self.offset = 0
+                self.reported_total = 4
+                self._list_query_gen = lambda offset, list_type, query_filter=None: {
+                    "query": {
+                        "filterBy": [
+                            {
+                                "fieldName": "direction",
+                                "fieldValue": {"value": "ASCENDING"},
+                            }
+                        ]
+                    }
+                }
+
+            def __len__(self) -> int:
+                return self.reported_total
+
+            def __iter__(self):
+                return iter(assets[self.offset :])
+
+        backend = ICloudBackend()
+        backend.api = SimpleNamespace(photos=SimpleNamespace(all=ChangingAlbum()))
+        backend.LivePhotoVersionSize = SimpleNamespace(
+            ORIGINAL="live-original",
+            MEDIUM="live-medium",
+            THUMB="live-thumb",
+        )
+
+        first = backend.load_items_page("全部照片", limit=2)
+        known_ids = {item.asset_id for item in first.items}
+        assets[:0] = [
+            SimpleNamespace(id="new-a", filename="NEW_A.HEIC", item_type="image", versions={}),
+            SimpleNamespace(id="new-b", filename="NEW_B.HEIC", item_type="image", versions={}),
+        ]
+        fresh = backend.load_items_page("全部照片", limit=2)
+        continued = backend.load_items_page(
+            "全部照片",
+            limit=2,
+            known_asset_ids=known_ids,
+        )
+
+        self.assertEqual(["new-a", "new-b"], [item.asset_id for item in fresh.items])
+        self.assertEqual(["new-a", "new-b"], [item.asset_id for item in continued.items])
 
 
 class SelectionAndSortTests(unittest.TestCase):

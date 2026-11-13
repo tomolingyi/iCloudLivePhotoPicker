@@ -40,7 +40,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Inno Setup compilation failed."
 }
 
-$Installer = Join-Path $ProjectRoot "dist\iCloudLivePhotoPicker-v0.5.3-Setup.exe"
+$Installer = Join-Path $ProjectRoot "dist\iCloudLivePhotoPicker-v0.5.4-Setup.exe"
 if (-not (Test-Path -LiteralPath $Installer)) {
     throw "The installer compiler completed without producing $Installer"
 }

@@ -8,15 +8,29 @@ $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 function Find-Python {
     if (Get-Command py -ErrorAction SilentlyContinue) {
         foreach ($Version in @("-3.13", "-3.12", "-3.11", "-3.10")) {
-            & py $Version -c "import sys" 2>$null
-            if ($LASTEXITCODE -eq 0) {
+            $PreviousErrorAction = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                & py $Version -c "import sys" 2>$null
+                $ProbeExitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $PreviousErrorAction
+            }
+            if ($ProbeExitCode -eq 0) {
                 return @{ Command = "py"; Arguments = @($Version) }
             }
         }
     }
     if (Get-Command python -ErrorAction SilentlyContinue) {
-        & python -c "import sys; assert (3, 10) <= sys.version_info[:2] < (3, 14)" 2>$null
-        if ($LASTEXITCODE -eq 0) {
+        $PreviousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & python -c "import sys; assert (3, 10) <= sys.version_info[:2] < (3, 14)" 2>$null
+            $ProbeExitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $PreviousErrorAction
+        }
+        if ($ProbeExitCode -eq 0) {
             return @{ Command = "python"; Arguments = @() }
         }
     }
@@ -104,10 +118,10 @@ try {
     $PortableImages = Join-Path $PortableDirectory "docs\images"
     New-Item -ItemType Directory -Force -Path $PortableImages | Out-Null
     Copy-Item -LiteralPath (Join-Path $ProjectRoot "docs\images\application.png") -Destination $PortableImages -Force
-    $Archive = Join-Path $ProjectRoot "dist\iCloudLivePhotoPicker-v0.5.3-windows-x64.zip"
+    $Archive = Join-Path $ProjectRoot "dist\iCloudLivePhotoPicker-v0.5.4-windows-x64.zip"
     Compress-Archive -Path (Join-Path $PortableDirectory "*") -DestinationPath $Archive -CompressionLevel Optimal -Force
 
-    $SourceStage = Join-Path $ProjectRoot "dist\iCloudLivePhotoPicker-v0.5.3-source"
+    $SourceStage = Join-Path $ProjectRoot "dist\iCloudLivePhotoPicker-v0.5.4-source"
     New-Item -ItemType Directory -Force -Path $SourceStage | Out-Null
     foreach ($Directory in @(".github", "docs", "packaging", "scripts", "src", "tests")) {
         Copy-Item -LiteralPath (Join-Path $ProjectRoot $Directory) -Destination $SourceStage -Recurse -Force
@@ -123,9 +137,14 @@ try {
     Get-ChildItem -LiteralPath $SourceStage -Recurse -Directory -Filter "__pycache__" |
         Sort-Object FullName -Descending |
         Remove-Item -Recurse -Force
-    Get-ChildItem -LiteralPath $SourceStage -Recurse -File -Include "*.pyc", "*.pyo" |
+    Get-ChildItem -LiteralPath $SourceStage -Recurse -File |
+        Where-Object { $_.Extension -in @(".pyc", ".pyo") } |
         Remove-Item -Force
-    $SourceArchive = Join-Path $ProjectRoot "dist\iCloudLivePhotoPicker-v0.5.3-source.zip"
+    $SourceFiles = @(Get-ChildItem -LiteralPath $SourceStage -Recurse -File)
+    if ($SourceFiles.Count -lt 20) {
+        throw "Source package staging is incomplete: only $($SourceFiles.Count) files were copied."
+    }
+    $SourceArchive = Join-Path $ProjectRoot "dist\iCloudLivePhotoPicker-v0.5.4-source.zip"
     Compress-Archive -Path (Join-Path $SourceStage "*") -DestinationPath $SourceArchive -CompressionLevel Optimal -Force
     Remove-Item -LiteralPath $SourceStage -Recurse -Force
     Write-Host "Build complete:"
